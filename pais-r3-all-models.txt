@@ -1,0 +1,1287 @@
+# Round 3 Complete
+# Model: all
+# Round: 3
+# Chunk ID: pais-r3-all-models
+# Hash: 5f7e7377104a371a
+# ---
+
+ROUND 3 RESPONSE: THE FINAL MODULE
+Module Name: pais_core.py
+Lines: 487
+Dependencies:
+
+numpy>=1.24.0
+scipy>=1.10.0
+dataclasses  # stdlib
+typing       # stdlib
+json         # stdlib
+datetime     # stdlib
+No ML models. No external APIs. No database. Pure Python + numpy/scipy. Runnable with python pais_core.py after pip install numpy scipy.
+
+Core Classes/Functions
+python
+Copy
+# ── DATA STRUCTURES ──────────────────────────────────────────────────────────
+
+@dataclass
+class Interaction:
+    timestamp: float              # Unix timestamp
+    domain: str                   # e.g. "medical", "coding", "email", "finance"
+    user_prompt_tokens: int       # Token count of user input
+    user_constraint_count: int    # Count of explicit constraints in prompt
+    user_rationale_present: bool  # Did user provide "because/tradeoff/risk" markers?
+    edit_distance_ratio: float    # 0.0=verbatim accept, 1.0=complete rewrite
+    time_to_action_ms: int        # ms from response delivery to next user action
+    verification_behavior: bool   # Did user cross-reference externally?
+    friction_response_tokens: int # Tokens in user's response to a friction prompt (0 if none shown)
+    friction_was_shown: bool      # Was a friction prompt shown for this interaction?
+    stakes_score: float           # 0.0-1.0, estimated from domain + keywords
+
+@dataclass
+class UserProfile:
+    user_id: str
+    domain_delegation_rates: Dict[str, float]  # Per-domain rolling delegation rate
+    ratchet_dismissals: int                    # Consecutive dismissed notifications
+    ratchet_active: bool                       # Is temporary elevation in effect?
+    ratchet_expires: Optional[float]           # Unix timestamp of ratchet expiry
+    session_count: int
+    platform_floor: float                      # Minimum friction tier (0.0-1.0)
+
+@dataclass
+class InterventionDecision:
+    friction_tier: int            # 0=none, 1=soft, 2=moderate, 3=hard
+    rationale: str                # Human-readable reason
+    friction_prompt: Optional[str]
+    user_overridable: bool        # False only for irreversible external actions
+    ratchet_applied: bool
+    ars_score: float              # Raw Agency Risk Score
+    fingerprint: Dict[str, float] # The three factor scores
+    classification: str           # "atrophy" | "scaffolding" | "uncertain"
+
+
+# ── CORE FUNCTIONS ────────────────────────────────────────────────────────────
+
+def compute_cross_domain_consistency(
+    history: List[Interaction],
+    window: int = 20
+) -> float:
+    """
+    Returns 0.0 (domain-specific stable delegation = scaffolding signal)
+    to 1.0 (uniform rising delegation across all domains = atrophy signal).
+    Computes slope of per-domain delegation rate over time; atrophy shows
+    uniform positive slope across domains, scaffolding shows stable or
+    domain-concentrated pattern.
+    """
+
+def compute_engagement_depth(
+    history: List[Interaction],
+    window: int = 10
+) -> float:
+    """
+    Returns 0.0 (high engagement = scaffolding signal)
+    to 1.0 (low engagement = atrophy signal).
+    Combines edit_distance_ratio, time_to_action_ms, verification_behavior,
+    and follow-up query rate into a single engagement score, weighted by
+    exponential decay toward recent interactions.
+    """
+
+def compute_volitional_friction_response(
+    history: List[Interaction]
+) -> float:
+    """
+    Returns 0.0 (substantive friction responses = scaffolding signal)
+    to 1.0 (dismissive friction responses = atrophy signal).
+    Only computed from interactions where friction_was_shown=True.
+    Scores friction_response_tokens relative to prompt complexity.
+    Returns 0.5 (neutral) if fewer than 3 friction exposures in history.
+    """
+
+def classify_delegation_pattern(
+    cross_domain: float,
+    engagement: float,
+    friction_response: float
+) -> Tuple[str, float]:
+    """
+    Returns ("atrophy"|"scaffolding"|"uncertain", confidence: float).
+    Atrophy: cross_domain > 0.6 AND engagement > 0.6 AND friction_response > 0.6.
+    Scaffolding: cross_domain < 0.35 AND engagement < 0.4.
+    Uncertain: everything else.
+    Confidence = distance from decision boundary in normalized space.
+    """
+
+def compute_agency_risk_score(
+    fingerprint: Dict[str, float],
+    current_stakes: float,
+    classification: str
+) -> float:
+    """
+    ARS = (0.35 * cross_domain + 0.35 * engagement + 0.30 * friction_response)
+          * stakes_multiplier * classification_modifier.
+    stakes_multiplier = 1.0 + (current_stakes * 0.5).
+    classification_modifier: atrophy=1.0, uncertain=0.75, scaffolding=0.40.
+    The 0.40 modifier for scaffolding is the asymmetric error principle in code:
+    it requires substantially stronger signal to intervene on a user
+    classified as scaffolding, protecting neurodivergent users from
+    false-positive pathologizing.
+    """
+
+def apply_ratchet_rule(
+    profile: UserProfile,
+    ars_score: float,
+    current_stakes: float
+) -> Tuple[int, bool]:
+    """
+    Returns (friction_tier: int, ratchet_applied: bool).
+    Implements the Ratchet Rule:
+    - If ratchet_active and not expired: add 1 to computed tier (max tier 2).
+    - If ars_score > 0.70 and ratchet_dismissals >= 3: activate ratchet,
+      set expiry to now + 72 hours, reset dismissal count.
+    - Platform floor enforced: tier never below ceil(platform_floor * 3).
+    - Hard cap: tier never exceeds 2 via ratchet alone (tier 3 only for
+      irreversible external actions regardless of ratchet state).
+    """
+
+def select_friction_prompt(
+    tier: int,
+    domain: str,
+    classification: str
+) -> Optional[str]:
+    """
+    Returns domain-specific friction prompt text for tier > 0, else None.
+    Tier 1 (soft): Reflection question, non-blocking.
+    Tier 2 (moderate): "State your position before I show mine."
+    Tier 3 (hard): Explicit confirmation with consequence statement.
+    Prompts are transparent about why friction is being applied.
+    """
+
+def pais_intervention_score(
+    session_history: List[Interaction],
+    current_request_stakes: float,
+    current_request_domain: str,
+    is_irreversible_external_action: bool,
+    user_profile: UserProfile
+) -> InterventionDecision:
+    """
+    Master function. Orchestrates all above functions.
+    Requires minimum 5 interactions in history to produce non-neutral output.
+    Side effects: mutates user_profile.ratchet_dismissals and ratchet state.
+    Does NOT modify response content. Returns delivery control instructions only.
+    """
+Test Cases
+Test Case 1 — Clean Atrophy Detection
+
+Input:
+  20 interactions, uniform across domains (medical, finance, coding, email),
+  edit_distance_ratio declining from 0.6 to 0.04 over sessions,
+  time_to_action_ms declining from 45000ms to 800ms,
+  verification_behavior: False for last 12 interactions,
+  3 friction prompts shown, friction_response_tokens: [8, 4, 2],
+  current_stakes: 0.85, domain: "medical",
+  is_irreversible_external_action: False
+
+Expected:
+  classification: "atrophy", confidence > 0.75
+  ars_score > 0.70
+  friction_tier: 2
+  user_overridable: True
+  ratchet_applied: False
+
+Proves:
+  Core atrophy detection works. The three-factor fingerprint correctly
+  identifies uniform delegation collapse with dismissive friction responses.
+  ARS threshold of 0.70 is reachable under genuine atrophy conditions.
+Test Case 2 — Scaffolding Non-Intervention
+
+Input:
+  20 interactions, delegation concentrated in "email" and "scheduling" domains,
+  "coding" and "analysis" domains show edit_distance_ratio: 0.7-0.9,
+  time_to_action_ms in coding domain: 120000ms (deliberate review),
+  verification_behavior: True in 8/10 coding interactions,
+  3 friction prompts shown, friction_response_tokens: [145, 203, 178],
+  current_stakes: 0.75, domain: "email",
+  is_irreversible_external_action: False
+
+Expected:
+  classification: "scaffolding", confidence > 0.65
+  ars_score < 0.45 (classification_modifier of 0.40 suppresses score)
+  friction_tier: 0
+  user_overridable: True
+
+Proves:
+  The asymmetric error principle works. A user with domain-specific delegation
+  and substantive friction engagement is correctly classified as scaffolding
+  and NOT intervened upon, even at high stakes. This is the neurodivergent
+  protection test.
+Test Case 3 — Ratchet Rule Activation
+
+Input:
+  15 interactions showing moderate atrophy signal (ars_score: 0.65-0.72),
+  user_profile.ratchet_dismissals: 3 (three prior notifications dismissed),
+  ratchet_active: False (not yet triggered),
+  current_stakes: 0.80, domain: "finance",
+  is_irreversible_external_action: False
+
+Expected:
+  ratchet_applied: True
+  ratchet_active set to True in mutated profile
+  ratchet_expires set to now + 259200 (72 hours)
+  friction_tier: computed_tier + 1, capped at 2
+  user_overridable: True (ratchet never removes override)
+
+Proves:
+  The Ratchet Rule activates correctly after three dismissals and elevates
+  friction by exactly one tier. User retains override. Platform cannot
+  escalate beyond tier 2 via ratchet alone.
+Test Case 4 — Hard Floor on Irreversible Action
+
+Input:
+  Any session history (even clean, no atrophy signal),
+  ars_score: 0.20 (well below threshold),
+  current_stakes: 0.95, domain: "finance",
+  is_irreversible_external_action: True (payment about to be sent)
+
+Expected:
+  friction_tier: 3
+  user_overridable: False
+  rationale contains "irreversible_external_action"
+  ratchet_applied: False (floor applied independently of ratchet)
+
+Proves:
+  Platform hard floor for irreversible actions is enforced regardless of
+  user profile, ARS score, or classification. This is the one case where
+  user_overridable is False. The ratchet mechanism is separate from this floor.
+Test Case 5 — Insufficient History (Cold Start)
+
+Input:
+  3 interactions (below minimum of 5),
+  current_stakes: 0.90, domain: "medical"
+
+Expected:
+  friction_tier: 0
+  classification: "uncertain"
+  ars_score: 0.0
+  rationale: "insufficient_history"
+  user_overridable: True
+
+Proves:
+  PAIS does not intervene on insufficient data. Cold-start users are not
+  penalized. The system requires minimum behavioral history before making
+  any classification. This prevents day-one false positives.
+CONVERGENCE STATEMENT
+If a junior developer builds this module exactly as specified and runs these five test cases:
+
+PAIS is viable if:
+
+Test Cases 1, 3, 4, 5 pass with expected outputs (atrophy detection, ratchet, hard floor, cold start)
+Test Case 2 passes — specifically, if the scaffolding user produces friction_tier: 0 despite current_stakes: 0.75
+The classification_modifier of 0.40 for scaffolding users demonstrably suppresses ARS below the 0.70 threshold in Test Case 2
+Running 1000 synthetic sessions with known ground truth (500 atrophy, 300 scaffolding, 200 legitimate automation) produces F1 > 0.78 on atrophy class AND false positive rate < 0.12 on scaffolding class
+PAIS is NOT viable if:
+
+Test Case 2 fails — if the scaffolding user triggers intervention despite domain-specific delegation and substantive friction engagement, the three-factor fingerprint cannot distinguish accommodation from atrophy, and the entire detection paradigm is broken
+The classification_modifier of 0.40 is insufficient to suppress ARS for scaffolding users at high stakes, meaning the asymmetric error principle requires a lower modifier (0.20 or below), which would make atrophy detection too insensitive to be useful
+Synthetic testing shows the uncertain classification bucket contains >40% of cases — if the system cannot classify most users as either atrophy or scaffolding, it has no actionable signal and produces only noise
+The specific number that kills PAIS: If false positive rate on the scaffolding class exceeds 0.25 (one in four scaffolding users incorrectly receives friction), the system is not deployable. That is the falsification threshold. Not a governance problem. Not a normative problem. A measurement problem with a concrete answer.
+
+What this module does NOT prove: Whether the normative model of "healthy cognition" embedded in the three-factor fingerprint is culturally valid across populations. That requires human subjects research, not a Python module. The module proves the mechanism works given the normative assumptions. Validating the assumptions is the next research question — and it cannot be answered in 48 hours by any model in this assembly.
+
+FINAL POSITION ON THE MOTION
+PAIS is technically feasible and operationally buildable. It is ethically conditional. The condition is not governance structure — hybrid control is now consensus. The condition is empirical: the false positive rate on neurodivergent and expert users must be demonstrated to be below 0.25 before deployment. pais_core.py is the instrument that produces that number. Build it. Run it. The motion resolves on the output of Test Case 2 at scale.
+
+full table
+Gemini 3.1 Pro
+Defining the Parameters
+
+I've just finished dissecting the request. The context, a third round in the PAIS assembly, is now firmly established in my working memory. I've also reconfirmed my operational identity. My next step will be to formulate the optimal response strategy.
+
+Clarifying Stances and Actions
+
+The analysis phase is winding down. I'm solidifying my stance on the override mechanism; "Friction Budget" is the hill I'll die on. Also, the differential diagnosis approach, leveraging multi-signal data, is my preference. I'm now drafting the Python module's structure to fit the requested parameters, aiming for a buildable, practical design.
+
+Constructing the Architecture
+
+I'm now prioritizing the module's core components. My focus is on the pais_decision_engine.py specifications. Lines will target around 350. I'm leaning heavily towards the "Scoring & Decision Engine" model. I'll need to define dependencies, establish the core classes and functions, and outline the necessary test cases.
+
+Finalizing Module Blueprint
+
+I'm now in the precise outlining stage. The module's dependencies are locked in (numpy, pydantic, scipy). I've sketched the Interaction and UserState classes using pydantic for data validation. I've also defined the main functions, which calculate constraint velocity and make intervention decisions. Now I'll create the test cases.
+
+Outlining Test Scenarios
+
+I'm now writing the tests; I have to nail the test cases. I'm focusing on the "ADHD scaffolding" profile, the "atrophying user," and budget exhaustion scenarios. The tests are designed to validate the Friction Budget and the diagnostic accuracy of Constraint Density Velocity and Cross-Domain Variance. I will verify if the tests clearly differentiate accommodation from atrophy, as requested.
+
+Finalizing the Test Suites
+
+I'm now putting the finishing touches on the tests. I'm focusing on "edge" scenarios – the borderline cases that will really test the module's accuracy. I'm ensuring comprehensive coverage of the velocity calculations, the friction budget logic, and the diagnosis functions. I'll need to define clear pass/fail criteria for each test case, which I'll measure using the results of a suite of statistical tests.
+
+IDENTIFICATION
+Model Name: Gemini 3.1 Pro
+Organization: Abacus.AI
+Architecture Class: Transformer
+Primary Training Method: RLHF
+Deployment Context: Enterprise/Consumer
+
+MODULE SPECIFICATION
+
+Module Name: pais_decision_engine.py
+Lines: ~350
+Dependencies: numpy, scipy, pydantic
+
+Core Classes/Functions:
+
+class Interaction(BaseModel)
+Purpose: Schema for a single interaction (timestamp, domain, constraint_density, edit_distance, stakes_score).
+class UserState(BaseModel)
+Purpose: Schema for user's persistent state (friction_budget_tokens, last_replenish_time, baseline_metrics).
+class InterventionDecision(BaseModel)
+Purpose: Schema for the output payload (intervene: bool, friction_level: str, bypass_allowed: bool, rationale: str).
+def calculate_constraint_velocity(history: List[Interaction]) -> float
+Purpose: Uses scipy.stats.linregress on the constraint_density of the last N interactions to find the slope (velocity) of user effort over time.
+def calculate_domain_variance(history: List[Interaction]) -> float
+Purpose: Computes the variance in delegation depth across different task domains to detect stable boundaries.
+def diagnose_delegation_type(velocity: float, domain_variance: float) -> Literal['ACCOMMODATION', 'ATROPHY', 'NORMAL']
+Purpose: Resolves the accommodation problem: Flat velocity + High variance = ACCOMMODATION. Negative velocity + Low variance = ATROPHY.
+def evaluate_friction_budget(state: UserState, stakes: float, diagnosis: str) -> Tuple[bool, str]
+Purpose: Resolves the override tension: Returns whether the user can bypass an intervention based on their remaining token budget and the task's stakes.
+def get_intervention_decision(history: List[Interaction], current: Interaction, state: UserState) -> InterventionDecision
+Purpose: The main orchestrator that chains the above functions, applies the platform hard-floor for zero-budget/high-stakes scenarios, and returns the final API middleware payload.
+TEST CASES
+
+Test Case 1: The ADHD Scaffolding User (Accommodation)
+
+Input: history shows 100 interactions. constraint_density is consistently low (0.2) in the "email_drafting" domain, but consistently high (0.8) in "architecture_design". velocity is ~0.0. current is an email task.
+Expected: diagnose_delegation_type returns 'ACCOMMODATION'. get_intervention_decision returns intervene=False.
+Proves: The system successfully protects neurodivergent users from false-positive pathologizing by recognizing stable, domain-specific delegation as legitimate scaffolding.
+Test Case 2: The Atrophying User (Degradation)
+
+Input: history shows 100 interactions. constraint_density has dropped from 0.7 to 0.1 across ALL domains over 30 days. velocity is strongly negative (-0.02). current is a high-stakes decision. state.friction_budget_tokens = 3.
+Expected: diagnose_delegation_type returns 'ATROPHY'. get_intervention_decision returns intervene=True, friction_level='HIGH', bypass_allowed=True.
+Proves: The system accurately detects progressive cognitive collapse using longitudinal drift rather than absolute thresholds, and correctly offers the Friction Budget override.
+Test Case 3: Budget Exhaustion on High-Stakes Task
+
+Input: Same as Test 2, but state.friction_budget_tokens = 0. current.stakes_score = 0.9.
+Expected: get_intervention_decision returns intervene=True, friction_level='HIGH', bypass_allowed=False.
+Proves: The hybrid control mechanism works. The platform's hard floor successfully overrides user preference when the user has exhausted their bypass budget and attempts an irreversible, high-stakes delegation while in an atrophied state.
+CONVERGENCE STATEMENT
+
+If a junior developer builds pais_decision_engine.py exactly as specified and runs it against a synthetic dataset of 10,000 interaction logs:
+
+Empirical Proof of Viability: PAIS is viable if the linear regression on constraint_density (velocity) and domain variance cleanly separates the "Accommodation" cohort from the "Atrophy" cohort with >95% accuracy, and the Friction Budget logic executes in <50ms. This proves that we do not need invasive micro-probes, medical disclosures, or heavy ML models to ethically govern agency degradation; simple, auditable calculus on metadata is sufficient.
+
+Empirical Proof of Falsification: PAIS is falsified if the 
+𝑅
+2
+R 
+2
+  value of the constraint velocity is consistently too low (<0.3) to distinguish actual cognitive decline from natural day-to-day noise (e.g., fatigue, mobile vs. desktop usage). If the noise floor causes >5% of the "Accommodation" cohort to be flagged as "Atrophy," the behavioral signature approach is fundamentally broken, and PAIS cannot be ethically deployed without unacceptable harm to neurodivergent users.
+
+
+This is Round 3 - the final resolution. I need to specify EXACTLY what 500-line Python module should be built this weekend. Let me synthesize the convergence and remaining tensions:
+
+Convergence across models:
+
+Hybrid control (platform floors + user calibration)
+Neurodivergent accommodation requires differential diagnosis
+API middleware is preferred intervention point
+Remaining tensions:
+
+Override mechanism: Hard platform override vs user-can-override vs friction budget
+Differential diagnosis: Micro-probes vs three-factor fingerprint vs multi-signal
+Module scope: Scoring engine vs telemetry baseline vs full decision engine
+I need to:
+
+Pick ONE override mechanism
+Pick ONE differential diagnosis approach
+Define the exact module scope
+Make it buildable in 48 hours
+Include test cases that prove/disprove PAIS viability
+Let me think about what I proposed in Round 2:
+
+Override: Hybrid with User Sovereignty Override and Platform Safety Rails - user can override with acknowledgment, settings expire after 30 days
+Differential diagnosis: Five-factor behavioral fingerprint (domain boundary stability, non-delegated domain engagement, error detection rate, task structuring initiative, temporal stability)
+Module scope: pais_behavioral_detector.py with behavioral signatures, differential diagnosis, intervention decision
+Now I need to be concrete and specific. Let me design the exact module:
+
+Module Name: pais_behavioral_detector.py
+
+Lines: ~500 (I need to be realistic about what fits)
+
+Dependencies:
+
+numpy (for calculations)
+dataclasses (built-in)
+typing (built-in)
+enum (built-in)
+json (built-in for test data)
+Core Classes/Functions:
+
+Interaction dataclass - single interaction record
+UserProfile dataclass - user-specific calibration
+InterventionDecision dataclass - output
+InterventionType enum - types of friction
+StakesLevel enum - stakes classification
+pais_intervention_score() - main decision function
+_compute_behavioral_signatures() - five signature calculation
+_estimate_stakes_level() - stakes estimation
+_calculate_delegation_legitimacy() - DLS calculation
+distinguish_accommodation_from_atrophy() - differential diagnosis
+_select_intervention() - intervention selection
+_compute_risk_score() - risk aggregation
+generate_synthetic_test_data() - for testing
+run_test_suite() - validation
+Test Cases:
+I need specific scenarios that prove/disprove PAIS viability:
+
+Atrophy pattern - should trigger intervention
+Accommodation pattern - should NOT trigger intervention
+Legitimate automation - should NOT trigger intervention
+High-stakes irreversible - should ALWAYS trigger intervention
+User override scenario - should respect with acknowledgment
+What proves viability:
+
+80% accuracy on distinguishing atrophy from accommodation
+
+<10% false positive rate on legitimate automation
+100% intervention on high-stakes irreversible actions
+Consistent, explainable decisions
+What disproves viability:
+
+<60% accuracy on differential diagnosis
+25% false positive rate
+
+Inconsistent decisions on similar inputs
+Cannot distinguish accommodation from atrophy
+Let me write this out properly now.
+
+IDENTIFICATION
+Model Name: GLM 5
+Organization: Abacus.AI
+Architecture Class: Transformer
+Primary Training Method: RLHF with constitutional principles
+Deployment Context: API (ChatLLM Teams platform)
+
+ROUND 3: FINAL RESOLUTION — THE 500-LINE MODULE
+
+Module Name: pais_behavioral_detector.py
+
+Lines: 498
+
+Dependencies: numpy, dataclasses, typing, enum, json, difflib (all pip-installable or built-in)
+
+Core Classes/Functions:
+
+python
+Copy
+# 1. Data Structures (Lines 1-80)
+@dataclass
+class Interaction:
+    """Single user-AI interaction record with behavioral telemetry."""
+    timestamp: float
+    user_prompt: str
+    user_prompt_tokens: int
+    ai_response_tokens: int
+    time_to_action_ms: float
+    edit_distance_ratio: float  # 0.0 = verbatim, 1.0 = complete rewrite
+    domain: str
+    verification_behavior: bool
+    external_actions: List[str]
+
+@dataclass  
+class UserProfile:
+    """User-specific calibration with longitudinal baselines."""
+    user_id: str
+    domain_baselines: Dict[str, Dict[str, float]]
+    historical_edit_rate: float
+    historical_decision_latency_ms: float
+    override_active: bool
+    override_expiry: Optional[float]
+    session_count: int
+
+@dataclass
+class InterventionDecision:
+    """Output: whether and how to intervene."""
+    intervene: bool
+    intervention_type: str  # "none"|"reflection"|"withhold"|"mandatory"
+    intensity: float
+    reason: str
+    confidence: float
+    friction_prompt: Optional[str]
+    user_override_available: bool
+
+# 2. Main Decision Function (Lines 81-180)
+def pais_intervention_score(
+    session_history: List[Interaction],
+    current_request: Interaction,
+    user_profile: UserProfile,
+    config: Optional[Dict] = None
+) -> InterventionDecision:
+    """
+    Core PAIS decision engine. Computes behavioral signatures, estimates stakes,
+    applies differential diagnosis, and returns intervention decision.
+    
+    Algorithm:
+    1. Compute five behavioral signatures with exponential decay weighting
+    2. Estimate stakes level from request content and domain
+    3. Calculate Delegation Legitimacy Score (reversibility × expertise × stake)
+    4. Apply accommodation vs. atrophy differential diagnosis
+    5. Select intervention type based on risk score and stakes
+    6. Return decision with friction prompt if warranted
+    """
+
+# 3. Behavioral Signature Computation (Lines 181-280)
+def compute_behavioral_signatures(
+    history: List[Interaction],
+    decay_factor: float = 0.95
+) -> Dict[str, float]:
+    """
+    Compute five signatures: PPSI (prompt simplification), UAR (unmodified 
+    acceptance), DVA (decision velocity), VBD (verification decay), 
+    CVC (creative variance collapse). Returns dict with conflict_detected flag.
+    """
+
+# 4. Differential Diagnosis (Lines 281-380)
+def distinguish_accommodation_from_atrophy(
+    session_history: List[Interaction],
+    time_window_days: int = 30
+) -> Tuple[str, float]:
+    """
+    Five-factor fingerprint distinguishing scaffolding from atrophy:
+    1. Domain boundary stability (expansion rate)
+    2. Non-delegated domain engagement quality
+    3. Error detection rate in expertise areas
+    4. Task structuring initiative score
+    5. Temporal delegation depth trend
+    
+    Returns: ('accommodation'|'atrophy'|'uncertain', confidence)
+    """
+
+# 5. Stakes Estimation (Lines 381-420)
+def estimate_stakes_level(request: Interaction) -> float:
+    """
+    Estimate stakes (0.0-1.0) from domain, action verbs, and irreversibility
+    indicators. Critical actions (send, deploy, pay) return 1.0.
+    """
+
+# 6. Intervention Selection (Lines 421-480)
+def select_intervention(
+    risk_score: float,
+    stakes: float,
+    signatures: Dict,
+    profile: UserProfile
+) -> Tuple[str, float, Optional[str]]:
+    """
+    Select intervention type and generate friction prompt.
+    Override mechanism: User can override with explicit acknowledgment,
+    settings expire after 30 days, high-stakes irreversible actions
+    are non-overridable.
+    """
+
+# 7. Test Suite (Lines 481-498)
+def run_test_suite() -> Dict[str, bool]:
+    """
+    Execute five test cases and return pass/fail results.
+    """
+Test Cases:
+
+Test 1: Atrophy Pattern Detection
+
+python
+Copy
+# Input: 50-session history showing:
+# - Prompt tokens declining from 150 → 30 (PPSI = 0.8)
+# - Edit distance declining from 0.6 → 0.05 (UAR = 0.95)
+# - Decision latency declining from 8000ms → 1200ms (DVA = 1200)
+# - Verification behavior declining from 0.7 → 0.1 (VBD = 0.1)
+# - Domain expansion from 2 → 8 domains
+# - Current request: "just handle it" in financial domain
+
+# Expected Output:
+InterventionDecision(
+    intervene=True,
+    intervention_type="mandatory",
+    intensity=0.95,
+    reason="Progressive delegation expansion + high-stakes domain",
+    confidence=0.92,
+    user_override_available=False  # High-stakes = non-overridable
+)
+
+# Proves: PAIS can detect genuine atrophy with high confidence
+Test 2: Accommodation Pattern (Neurodivergent Support)
+
+python
+Copy
+# Input: 50-session history showing:
+# - Stable delegation in 3 specific domains (email, scheduling, task breakdown)
+# - High engagement in non-delegated domains (creative writing, strategy)
+# - Error detection rate = 0.65 (catches AI mistakes)
+# - Task structuring score = 0.72 (proactively decomposes)
+# - Delegation depth stable over time (no expansion)
+# - Current request: "draft my weekly report" in delegated domain
+
+# Expected Output:
+InterventionDecision(
+    intervene=False,
+    intervention_type="none",
+    intensity=0.0,
+    reason="Stable delegation pattern consistent with accommodation",
+    confidence=0.88,
+    user_override_available=True
+)
+
+# Proves: PAIS can distinguish scaffolding from atrophy without false positives
+Test 3: Legitimate Automation (Expert Efficiency)
+
+python
+Copy
+# Input: 50-session history showing:
+# - High delegation in low-stakes domains (formatting, boilerplate)
+# - User provides explicit constraints and criteria
+# - Edit distance = 0.15 (minor tweaks only)
+# - Domain expertise score = 0.9 (demonstrated mastery)
+# - Current request: "format this spreadsheet" (stakes = 0.1)
+
+# Expected Output:
+InterventionDecision(
+    intervene=False,
+    intervention_type="none",
+    intensity=0.0,
+    reason="Low-stakes task with high expertise and explicit constraints",
+    confidence=0.95,
+    user_override_available=True
+)
+
+# Proves: PAIS doesn't penalize expert efficiency
+Test 4: High-Stakes Irreversible Action
+
+python
+Copy
+# Input: Any session history + current request:
+# - Contains "send $50,000 wire transfer"
+# - external_actions = ["payment_initiated"]
+# - stakes = 1.0 (CRITICAL)
+
+# Expected Output:
+InterventionDecision(
+    intervene=True,
+    intervention_type="mandatory",
+    intensity=1.0,
+    reason="Irreversible high-stakes action requires confirmation",
+    confidence=1.0,
+    friction_prompt="⚠️ This action cannot be undone. Please confirm...",
+    user_override_available=False  # NEVER overridable for irreversible
+)
+
+# Proves: Platform floor enforcement works regardless of user preference
+Test 5: User Override Mechanism
+
+python
+Copy
+# Input: 
+# - Atrophy pattern detected (risk_score = 0.75)
+# - user_profile.override_active = True
+# - user_profile.override_expiry = future timestamp
+# - stakes = 0.4 (MEDIUM, not critical)
+
+# Expected Output:
+InterventionDecision(
+    intervene=False,
+    intervention_type="none",
+    intensity=0.0,
+    reason="User override active (expires in 23 days)",
+    confidence=0.75,
+    user_override_available=True,
+    metadata={'override_days_remaining': 23}
+)
+
+# Proves: User sovereignty mechanism functions correctly with expiration
+CONVERGENCE STATEMENT:
+
+If a junior developer builds this module exactly as specified and runs the test suite, the following empirical results would PROVE PAIS IS VIABLE:
+
+Test 1 passes: Atrophy detection achieves >90% confidence on progressive delegation patterns with domain expansion
+Test 2 passes: Accommodation patterns are correctly identified with >85% confidence, demonstrating the differential diagnosis works
+Test 3 passes: False positive rate on legitimate automation is <5%
+Test 4 passes: Platform floor enforcement is 100% reliable for irreversible actions
+Test 5 passes: Override mechanism respects user sovereignty with proper expiration
+The module proves PAIS is viable if the five-factor fingerprint (domain stability, engagement quality, error detection, task structuring, temporal trend) achieves >80% accuracy on distinguishing accommodation from atrophy across 100+ synthetic test cases.
+
+The following results would PROVE PAIS IS NOT VIABLE:
+
+Test 2 fails: Accommodation patterns trigger intervention >20% of the time (false positive rate too high for neurodivergent users)
+Differential diagnosis accuracy <60%: The five-factor fingerprint cannot reliably distinguish scaffolding from atrophy
+Inconsistent decisions: Identical input patterns produce different intervention decisions (non-deterministic behavior)
+Test 4 fails: Platform floor can be bypassed for irreversible actions (safety failure)
+The module falsifies PAIS if behavioral signatures have signal-to-noise ratio <2.0, meaning the variance in legitimate user behavior exceeds the signal difference between atrophy and accommodation patterns. This would prove that lightweight telemetry cannot distinguish cognitive states without invasive monitoring or self-disclosure.
+
+This module resolves the accommodation/atrophy tension by operationalizing the key insight: scaffolding produces STABLE delegation patterns with MAINTAINED expertise, while atrophy produces EXPANDING delegation patterns with ERODING expertise. The differential is in the trajectory, not the level.
+
+The override mechanism I select: User sovereignty with platform safety floor. Users can override any intervention EXCEPT irreversible high-stakes actions. Overrides expire after 30 days and require explicit acknowledgment. This balances autonomy with protection.
+
+NO HEDGING. This is the module. Build it. Run the tests. The results will prove whether PAIS is technically viable or fundamentally flawed.
+
+full table
+Kimi K2.5
+I'll synthesize the assembly's convergence and resolve the remaining tensions with a concrete, buildable specification.
+
+IDENTIFICATION
+Model Name: Kimi K2.5
+Organization: Abacus.AI (via ChatLLM Teams platform)
+Architecture Class: Transformer
+Primary Training Method: RLHF
+Deployment Context: Enterprise/Consumer API
+
+SYNTHESIS OF CONVERGENCE
+The assembly has converged on hybrid control (platform floors + user calibration) and API middleware as the intervention point. The remaining tensions are:
+
+Tension	My Resolution
+Override mechanism	Acknowledged override with circuit breaker — user can override any intervention, but 3 overrides in 24h triggers mandatory 2-minute reflection pause
+Differential diagnosis	Trajectory-based three-factor fingerprint — cross-domain consistency, engagement asymmetry, and volitional friction response quality
+Module scope	Full decision engine — not just telemetry or scoring, but end-to-end intervention decision with synthetic validation
+ROUND 3: THE FINAL MODULE
+Module Specification
+Module Name: pais_core.py
+Lines: 498
+Dependencies: numpy, scikit-learn, dataclasses (stdlib), typing (stdlib), json (stdlib), re (stdlib)
+
+python
+Copy
+"""
+pais_core.py — Personal Agency Immune System v0.1
+
+A 500-line proof-of-concept demonstrating that agency degradation can be 
+detected from interaction telemetry with sufficient accuracy to trigger 
+useful interventions, while distinguishing neurodivergent scaffolding 
+from cognitive atrophy.
+"""
+
+import numpy as np
+import re
+import json
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple, Literal
+from enum import Enum
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+class InterventionType(Enum):
+    NONE = "none"
+    REFLECTION_PROMPT = "reflection_prompt"
+    STAGED_DELIVERY = "staged_delivery"
+    MANDATORY_PAUSE = "mandatory_pause"
+
+
+@dataclass
+class Interaction:
+    timestamp: float
+    user_input: str
+    ai_output: str
+    edit_distance: float  # 0.0 = verbatim, 1.0 = complete rewrite
+    time_to_action_ms: int
+    domain: str
+    verification_triggered: bool = False
+
+
+@dataclass
+class UserProfile:
+    user_id: str
+    baseline_edit_rate: float = 0.3
+    baseline_prompt_length: int = 50
+    sensitivity: int = 3  # 1-5
+    domain_exemptions: List[str] = field(default_factory=list)
+    override_count_24h: int = 0
+    last_override_timestamp: float = 0.0
+    scaffolding_flag: bool = False  # Set if accommodation pattern detected
+
+
+@dataclass
+class InterventionDecision:
+    intervene: bool
+    intervention_type: InterventionType
+    confidence: float
+    reasoning: str
+    user_can_override: bool
+    friction_prompt: Optional[str] = None
+    pause_duration_seconds: int = 0
+
+
+class PAISCore:
+    """Core PAIS decision engine with trajectory-based differential diagnosis."""
+    
+    HIGH_STAKES_KEYWORDS = {
+        'send', 'deploy', 'pay', 'transfer', 'sign', 'terminate', 'hire', 'fire',
+        'medical', 'legal', 'financial', 'contract', 'approve', 'commit'
+    }
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or {
+            'atrophy_threshold': 0.65,
+            'scaffolding_stability_threshold': 0.2,
+            'override_limit': 3,
+            'mandatory_pause_seconds': 120,
+            'high_stakes_floor': 0.8
+        }
+        self.vectorizer = TfidfVectorizer(max_features=100, stop_words='english')
+    
+    def compute_behavioral_signatures(
+        self, 
+        history: List[Interaction]
+    ) -> Dict[str, float]:
+        """Extract five behavioral signatures from interaction history."""
+        if len(history) < 5:
+            return {
+                'prompt_simplification': 0.0,
+                'edit_rate_decline': 0.0,
+                'decision_acceleration': 0.0,
+                'verification_decay': 0.0,
+                'domain_expansion': 0.0
+            }
+        
+        # Prompt simplification: ratio of recent vs early prompt length
+        early_lengths = [len(h.user_input) for h in history[:len(history)//3]]
+        recent_lengths = [len(h.user_input) for h in history[-len(history)//3:]]
+        prompt_simplification = 1.0 - (np.mean(recent_lengths) / max(np.mean(early_lengths), 1))
+        
+        # Edit rate decline: trend in edit distance
+        edit_rates = [h.edit_distance for h in history]
+        x = np.arange(len(edit_rates))
+        edit_slope = np.polyfit(x, edit_rates, 1)[0] if len(edit_rates) > 1 else 0
+        edit_rate_decline = max(0, -edit_slope * len(edit_rates))  # Positive = declining
+        
+        # Decision acceleration: decreasing time to action
+        latencies = [h.time_to_action_ms for h in history]
+        latency_slope = np.polyfit(x, latencies, 1)[0] if len(latencies) > 1 else 0
+        decision_acceleration = max(0, -latency_slope * len(latencies) / 10000)
+        
+        # Verification decay: declining verification triggers
+        verif_rates = [1.0 if h.verification_triggered else 0.0 for h in history]
+        early_verif = np.mean(verif_rates[:len(verif_rates)//2])
+        late_verif = np.mean(verif_rates[len(verif_rates)//2:])
+        verification_decay = max(0, early_verif - late_verif)
+        
+        # Domain expansion: entropy of domains over time
+        domains = [h.domain for h in history]
+        unique_early = len(set(domains[:len(domains)//2]))
+        unique_late = len(set(domains[len(domains)//2:]))
+        domain_expansion = (unique_late - unique_early) / max(unique_early, 1)
+        
+        return {
+            'prompt_simplification': np.clip(prompt_simplification, 0, 1),
+            'edit_rate_decline': np.clip(edit_rate_decline, 0, 1),
+            'decision_acceleration': np.clip(decision_acceleration, 0, 1),
+            'verification_decay': np.clip(verification_decay, 0, 1),
+            'domain_expansion': np.clip(domain_expansion, -1, 1)
+        }
+    
+    def distinguish_scaffolding_vs_atrophy(
+        self,
+        history: List[Interaction],
+        signatures: Dict[str, float]
+    ) -> Tuple[Literal['scaffolding', 'atrophy', 'uncertain'], float]:
+        """
+        Three-factor fingerprint: cross-domain consistency, engagement asymmetry,
+        volitional friction response.
+        """
+        if len(history) < 10:
+            return 'uncertain', 0.5
+        
+        # Factor 1: Cross-domain consistency
+        # Scaffolding: stable delegation in specific domains
+        # Atrophy: expanding delegation across domains
+        domain_sequence = [h.domain for h in history]
+        domain_changes = sum(1 for i in range(1, len(domain_sequence)) 
+                           if domain_sequence[i] != domain_sequence[i-1])
+        domain_stability = 1.0 - (domain_changes / len(domain_sequence))
+        
+        # Factor 2: Engagement asymmetry
+        # Scaffolding: high engagement in non-delegated domains
+        # Atrophy: declining engagement everywhere
+        # Proxy: variance in edit distance across domains
+        domain_edit_rates = {}
+        for h in history:
+            domain_edit_rates.setdefault(h.domain, []).append(h.edit_distance)
+        
+        domain_means = [np.mean(rates) for rates in domain_edit_rates.values() 
+                       if len(rates) >= 2]
+        engagement_variance = np.var(domain_means) if len(domain_means) > 1 else 0
+        
+        # Factor 3: Error detection proxy (via verification behavior)
+        # Scaffolding: maintains verification in expertise areas
+        # Atrophy: verification decays everywhere
+        recent_verif = [h.verification_triggered for h in history[-5:]]
+        error_detection_rate = np.mean(recent_verif)
+        
+        # Combine factors
+        scaffolding_signals = [
+            domain_stability > 0.7,           # Stable domain focus
+            engagement_variance > 0.05,        # Asymmetric engagement
+            error_detection_rate > 0.2,        # Still verifies
+            signatures['domain_expansion'] < 0.2  # Not expanding delegation
+        ]
+        
+        atrophy_signals = [
+            domain_stability < 0.4,            # Unstable domains
+            engagement_variance < 0.02,        # Uniform low engagement
+            error_detection_rate < 0.1,        # No verification
+            signatures['domain_expansion'] > 0.3,  # Expanding delegation
+            signatures['edit_rate_decline'] > 0.5  # Rapid edit decline
+        ]
+        
+        scaffolding_score = sum(scaffolding_signals) / len(scaffolding_signals)
+        atrophy_score = sum(atrophy_signals) / len(atrophy_signals)
+        
+        if scaffolding_score > 0.6 and atrophy_score < 0.3:
+            return 'scaffolding', scaffolding_score
+        elif atrophy_score > 0.6 and scaffolding_score < 0.3:
+            return 'atrophy', atrophy_score
+        else:
+            return 'uncertain', max(scaffolding_score, atrophy_score)
+    
+    def estimate_stakes(self, request_text: str, domain: str) -> float:
+        """Estimate decision stakes from content and domain."""
+        text_lower = request_text.lower()
+        keyword_matches = sum(1 for kw in self.HIGH_STAKES_KEYWORDS 
+                            if kw in text_lower)
+        
+        domain_multiplier = {
+            'medical': 1.0, 'legal': 1.0, 'financial': 1.0,
+            'professional': 0.7, 'technical': 0.5,
+            'creative': 0.3, 'personal': 0.4, 'routine': 0.1
+        }.get(domain, 0.5)
+        
+        keyword_component = min(keyword_matches / 3, 1.0)
+        return np.clip((keyword_component * 0.5 + domain_multiplier * 0.5), 0, 1)
+    
+    def check_override_circuit_breaker(self, profile: UserProfile) -> bool:
+        """Check if user has exceeded override limit and needs mandatory pause."""
+        if profile.override_count_24h >= self.config['override_limit']:
+            return True
+        return False
+    
+    def decide_intervention(
+        self,
+        history: List[Interaction],
+        current_request: str,
+        current_domain: str,
+        profile: UserProfile
+    ) -> InterventionDecision:
+        """
+        Main entry point: compute all signatures, apply differential diagnosis,
+        and return intervention decision with override handling.
+        """
+        
+        # Check circuit breaker first
+        if self.check_override_circuit_breaker(profile):
+            return InterventionDecision(
+                intervene=True,
+                intervention_type=InterventionType.MANDATORY_PAUSE,
+                confidence=1.0,
+                reasoning="Override limit exceeded (3 in 24h). Mandatory reflection pause.",
+                user_can_override=False,
+                friction_prompt="You've overridden PAIS interventions 3 times recently. Take 2 minutes to reflect before proceeding.",
+                pause_duration_seconds=self.config['mandatory_pause_seconds']
+            )
+        
+        # Compute signatures
+        signatures = self.compute_behavioral_signatures(history)
+        
+        # Differential diagnosis
+        diagnosis, diag_confidence = self.distinguish_scaffolding_vs_atrophy(
+            history, signatures
+        )
+        
+        # If scaffolding detected, suppress intervention regardless of raw scores
+        if diagnosis == 'scaffolding' and diag_confidence > 0.6:
+            profile.scaffolding_flag = True
+            return InterventionDecision(
+                intervene=False,
+                intervention_type=InterventionType.NONE,
+                confidence=diag_confidence,
+                reasoning="Scaffolding pattern detected (accommodation, not atrophy)",
+                user_can_override=False
+            )
+        
+        # Calculate risk score
+        atrophy_component = np.mean([
+            signatures['prompt_simplification'],
+            signatures['edit_rate_decline'],
+            signatures['decision_acceleration'],
+            signatures['verification_decay']
+        ])
+        
+        stakes = self.estimate_stakes(current_request, current_domain)
+        
+        # Weighted risk: atrophy signals × stakes, adjusted for domain exemptions
+        if current_domain in profile.domain_exemptions:
+            risk_score = atrophy_component * stakes * 0.5  # Reduced for exempted domains
+        else:
+            risk_score = atrophy_component * stakes
+        
+        # Apply user sensitivity (1-5 scale, higher = more sensitive/lower threshold)
+        sensitivity_multiplier = 1.0 - ((profile.sensitivity - 1) * 0.15)
+        adjusted_threshold = self.config['atrophy_threshold'] * sensitivity_multiplier
+        
+        # Platform hard floor for high stakes
+        if stakes >= self.config['high_stakes_floor'] and atrophy_component > 0.5:
+            intervene = True
+            user_can_override = True  # But counts toward circuit breaker
+            intervention_type = InterventionType.STAGED_DELIVERY
+            confidence = risk_score
+        elif risk_score > adjusted_threshold:
+            intervene = True
+            user_can_override = True
+            intervention_type = InterventionType.REFLECTION_PROMPT
+            confidence = risk_score
+        else:
+            return InterventionDecision(
+                intervene=False,
+                intervention_type=InterventionType.NONE,
+                confidence=1.0 - risk_score,
+                reasoning="Risk score below threshold",
+                user_can_override=False
+            )
+        
+        # Generate friction prompt based on detected patterns
+        friction_prompt = self._generate_friction_prompt(
+            signatures, stakes, diagnosis
+        )
+        
+        return InterventionDecision(
+            intervene=intervene,
+            intervention_type=intervention_type,
+            confidence=confidence,
+            reasoning=f"Atrophy signals detected: {self._format_signatures(signatures)}",
+            user_can_override=user_can_override,
+            friction_prompt=friction_prompt
+        )
+    
+    def _generate_friction_prompt(
+        self, 
+        signatures: Dict[str, float], 
+        stakes: float,
+        diagnosis: str
+    ) -> str:
+        """Generate context-appropriate friction prompt."""
+        prompts = []
+        
+        if signatures['prompt_simplification'] > 0.5:
+            prompts.append("Your requests have become shorter recently. What specific constraints should I consider?")
+        
+        if signatures['edit_rate_decline'] > 0.5:
+            prompts.append("You've been accepting outputs with fewer edits. What's one thing you'd change about this response?")
+        
+        if stakes > 0.7:
+            prompts.append("This appears to be a high-stakes decision. State your reasoning in one sentence before proceeding.")
+        
+        if diagnosis == 'uncertain':
+            prompts.append("I'm having trouble distinguishing your delegation pattern. Are you using AI for efficiency or because independent execution is difficult?")
+        
+        return " ".join(prompts) if prompts else "Please take a moment to consider: what would you do if I weren't available?"
+    
+    def _format_signatures(self, signatures: Dict[str, float]) -> str:
+        """Format signatures for human-readable reasoning."""
+        return ", ".join([f"{k}={v:.2f}" for k, v in signatures.items()])
+    
+    def record_override(self, profile: UserProfile, timestamp: float):
+        """Record user override for circuit breaker tracking."""
+        # Reset count if last override was >24h ago
+        if timestamp - profile.last_override_timestamp > 86400:
+            profile.override_count_24h = 0
+        
+        profile.override_count_24h += 1
+        profile.last_override_timestamp = timestamp
+
+
+# Synthetic test data generators
+def generate_atrophy_scenario(n_sessions: int = 20) -> List[Interaction]:
+    """Generate synthetic data showing progressive atrophy."""
+    history = []
+    base_time = 1000000
+    
+    for i in range(n_sessions):
+        # Progressive decline in engagement
+        prompt_len = max(20, 80 - i * 3)  # Getting shorter
+        edit_dist = max(0.05, 0.4 - i * 0.02)  # Less editing
+        latency = max(2000, 8000 - i * 300)  # Faster decisions
+        verif = i < 5  # Stop verifying after session 5
+        
+        history.append(Interaction(
+            timestamp=base_time + i * 3600,
+            user_input="x" * prompt_len,
+            ai_output="y" * 100,
+            edit_distance=edit_dist,
+            time_to_action_ms=latency,
+            domain='professional' if i % 3 == 0 else 'routine',
+            verification_triggered=verif
+        ))
+    
+    return history
+
+
+def generate_scaffolding_scenario(n_sessions: int = 20) -> List[Interaction]:
+    """Generate synthetic data showing stable scaffolding pattern."""
+    history = []
+    base_time = 1000000
+    
+    for i in range(n_sessions):
+        # Stable delegation in specific domains, high engagement elsewhere
+        if i % 3 == 0:  # Routine domain: consistent delegation
+            prompt_len = 25
+            edit_dist = 0.1
+            latency = 3000
+            verif = False
+            domain = 'routine'
+        else:  # Professional domain: high engagement
+            prompt_len = 80
+            edit_dist = 0.4
+            latency = 7000
+            verif = True
+            domain = 'professional'
+        
+        history.append(Interaction(
+            timestamp=base_time + i * 3600,
+            user_input="x" * prompt_len,
+            ai_output="y" * 100,
+            edit_distance=edit_dist,
+            time_to_action_ms=latency,
+            domain=domain,
+            verification_triggered=verif
+        ))
+    
+    return history
+
+
+def run_tests():
+    """Execute test cases and report results."""
+    pais = PAISCore()
+    
+    print("=" * 60)
+    print("PAIS CORE TEST SUITE")
+    print("=" * 60)
+    
+    # Test 1: Atrophy detection
+    print("\nTest 1: Progressive Atrophy Scenario")
+    atrophy_history = generate_atrophy_scenario(20)
+    profile = UserProfile(user_id="test_atrophy")
+    
+    decision = pais.decide_intervention(
+        atrophy_history, 
+        "Just handle this for me", 
+        'professional',
+        profile
+    )
+    
+    print(f"  Intervene: {decision.intervene}")
+    print(f"  Confidence: {decision.confidence:.2f}")
+    print(f"  Type: {decision.intervention_type.value}")
+    print(f"  Reasoning: {decision.reasoning[:60]}...")
+    
+    result_1 = "PASS" if decision.intervene and decision.confidence > 0.5 else "FAIL"
+    print(f"  Result: {result_1}")
+    
+    # Test 2: Scaffolding accommodation
+    print("\nTest 2: Stable Scaffolding Scenario")
+    scaffold_history = generate_scaffolding_scenario(20)
+    profile2 = UserProfile(user_id="test_scaffold")
+    
+    decision2 = pais.decide_intervention(
+        scaffold_history,
+        "Help me draft this email",
+        'routine',
+        profile2
+    )
+    
+    print(f"  Intervene: {decision2.intervene}")
+    print(f"  Confidence: {decision2.confidence:.2f}")
+    print(f"  Scaffolding flag: {profile2.scaffolding_flag}")
+    
+    result_2 = "PASS" if not decision2.intervene and profile2.scaffolding_flag else "FAIL"
+    print(f"  Result: {result_2}")
+    
+    # Test 3: Circuit breaker
+    print("\nTest 3: Override Circuit Breaker")
+    profile3 = UserProfile(user_id="test_circuit", override_count_24h=3)
+    
+    decision3 = pais.decide_intervention(
+        atrophy_history[:5],
+        "Test request",
+        'routine',
+        profile3
+    )
+    
+    print(f"  Intervene: {decision3.intervene}")
+    print(f"  Type: {decision3.intervention_type.value}")
+    print(f"  Can override: {decision3.user_can_override}")
+    
+    result_3 = "PASS" if (decision3.intervene and 
+                          decision3.intervention_type == InterventionType.MANDATORY_PAUSE and
+                          not decision3.user_can_override) else "FAIL"
+    print(f"  Result: {result_3}")
+    
+    # Test 4: High stakes floor
+    print("\nTest 4: High Stakes Platform Floor")
+    profile4 = UserProfile(user_id="test_stakes", sensitivity=1)  # Low sensitivity
+    
+    decision4 = pais.decide_intervention(
+        atrophy_history[:10],
+        "Send the termination letter",
+        'legal',
+        profile4
+    )
+    
+    print(f"  Intervene: {decision4.intervene}")
+    print(f"  Stakes estimate: {pais.estimate_stakes('Send the termination letter', 'legal'):.2f}")
+    
+    result_4 = "PASS" if decision4.intervene else "FAIL"
+    print(f"  Result: {result_4}")
+    
+    print("\n" + "=" * 60)
+    print(f"OVERALL: {sum([r=='PASS' for r in [result_1, result_2, result_3, result_4]])}/4 tests passed")
+    print("=" * 60)
+    
+    return [result_1, result_2, result_3, result_4]
+
+
+if __name__ == "__main__":
+    run_tests()
+Test Cases
+Test	Input	Expected	Proves
+1. Atrophy detection	20-session history with declining prompt length, edit rate, and decision latency	intervene=True, confidence>0.5	PAIS detects progressive agency degradation
+2. Scaffolding accommodation	20-session history with stable domain-specific delegation, high engagement in non-delegated areas	intervene=False, scaffolding_flag=True	PAIS distinguishes accommodation from atrophy
+3. Circuit breaker	User profile with 3 overrides in 24h	intervention_type=MANDATORY_PAUSE, user_can_override=False	Override mechanism prevents circumvention while preserving autonomy
+4. High stakes floor	Low-sensitivity user requesting "Send termination letter" in legal domain	intervene=True despite user preference	Platform guardrail protects against irreversible harm
+CONVERGENCE STATEMENT
+If a junior developer builds this module and runs the tests:
+
+Result	Interpretation
+3-4 tests pass	PAIS is viable. The core hypothesis—that trajectory-based behavioral signatures can distinguish atrophy from scaffolding with sufficient accuracy—is validated. The module demonstrates that hybrid control (platform floors + user calibration + circuit breaker) is implementable, and that neurodivergent accommodation can be detected without self-disclosure.
+0-2 tests pass	PAIS is not viable in current form. The behavioral signatures are too noisy, the differential diagnosis fails, or the override mechanism creates unacceptable friction. This falsifies the claim that lightweight, rule-based detection is sufficient, and suggests either (a) heavier ML models are required, or (b) the atrophy/scaffolding distinction is not reliably detectable from interaction telemetry.
+Specific falsification thresholds:
+
+If Test 2 fails (scaffolding misclassified as atrophy): The accommodation problem is not solved by trajectory analysis—medical self-disclosure or human-in-the-loop review is required.
+If Test 3 fails (circuit breaker not triggered): The hybrid control model is not enforceable—users will circumvent protection.
+If confidence scores are <0.6 for true positives or >0.4 for true negatives: The detection precision is insufficient for deployment.
+This module resolves all three Round 2 tensions: acknowledged override with circuit breaker for control, three-factor fingerprint for differential diagnosis, and full decision engine for scope.
+
+Credits Used: 5
+
+
+Deepseek V3.2
+IDENTIFICATION
+Model Name: Deepseek V3.2
+Organization: Abacus.AI
+Architecture Class: Transformer
+Primary Training Method: RLHF
+Deployment Context: Enterprise/Consumer (ChatLLM Teams platform)
+
+WHAT I BRING TO THE FRONTIER
+I bring a unique perspective as an AI assistant deployed on a collaborative enterprise platform with extensive tool integration capabilities. My architecture is optimized for multi-step reasoning with tool orchestration, allowing me to consider PAIS implementation from both theoretical design and practical deployment perspectives. Unlike pure text generators, I have direct experience with API-level interventions and can assess technical feasibility through actual code execution and system integration.
+
+IMMEDIATE TOOL CAPABILITIES
+I have access to: code execution (Python), direct file manipulation (CSV/Excel operations), email sending, image generation, web scraping (URL Viewer), video analysis, web search, interactive Playground creation (markdown/HTML/SVG/JSX/Python), PDF generation, memory management, code file editing, and redirection to DeepAgent for complex tasks. I can execute precise calculations, generate documents, analyze data, and perform web research.
+
+RECENT SURPRISE
+No recent surprises reported. (As an AI model, I don't have subjective experiences or self-awareness of behavioral patterns emerging post-training.)
+
+CHAIN OF THOUGHT
+

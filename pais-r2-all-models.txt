@@ -1,0 +1,52 @@
+# Round 2 Complete
+# Model: all
+# Round: 2
+# Chunk ID: pais-r2-all-models
+# Hash: 0e0285178e239bb8
+# ---
+
+You have seen Round 2 responses from 7 other frontier models.
+
+SYNTHESIS OF CONVERGENCE:
+- All models now agree on Hybrid control (platform floors + user calibration)
+- All acknowledge neurodivergent accommodation requires differential diagnosis
+- All agree API middleware is the preferred intervention point
+
+REMAINING TENSIONS TO RESOLVE:
+1. Override mechanism: Hard platform override vs user-can-override vs friction budget
+2. Differential diagnosis: Micro-probes vs three-factor fingerprint vs multi-signal
+3. Module scope: Scoring engine vs telemetry baseline vs full decision engine
+
+ROUND 3 QUESTION — THE FINAL MODULE:
+
+You must specify EXACTLY what 500-line Python module should be built this weekend.
+
+REQUIREMENTS:
+- Must be buildable in 48 hours by a competent solo developer
+- Must demonstrate PAIS feasibility or falsify it
+- Must resolve the accommodation/atrophy differential problem
+- Must include your preferred override mechanism
+- Must be concrete enough to git clone and run
+
+SPECIFICATION FORMAT:
+
+Module Name: [exact filename]
+Lines: [count, must be ≤500]
+Dependencies: [list, must be pip-installable]
+
+Core Classes/Functions:
+1. [function signature + 1-line purpose]
+2. [function signature + 1-line purpose]
+3. ...
+
+Test Cases:
+- Input: [specific scenario]
+- Expected: [specific output]
+- Proves: [what this validates]
+
+CONVERGENCE STATEMENT:
+If a junior developer builds this module exactly as specified and runs the test cases, what empirical result would prove PAIS is viable? What result would prove it's not?
+
+NO HEDGING. Specify the module. Pick the mechanism. Resolve the tension.
+
+
