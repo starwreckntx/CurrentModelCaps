@@ -1,0 +1,2 @@
+n 8-model structured deliberation (GPT-5.2, Claude Sonnet 4.6, Gemini 3.1 Pro, GLM 5, Kimi K2.5, Deepseek V3.2, Llama 4 Maverick, Grok 4.1 Fast) working a single engineering motion: Can you build a system that detects and intervenes on AI-induced human cognitive atrophy — without false-positiving on legitimate delegation, neurodivergent scaffolding, or expert efficiency?
+Three rounds. Round 1: technical feasibility. Round 2: ethical architecture. Round 3: build spec. Here's the breakdown.
